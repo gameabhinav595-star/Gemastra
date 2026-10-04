@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>JARVIS / ULTRON ADVANCED 3D HUD</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #010206;
+            font-family: 'Courier New', monospace;
+            user-select: none;
+            touch-action: none; /* Prevents mobile browser scrolling */
+        }
+
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
+
+        body::before {
+            content: "";
+            display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 4; background-size: 100% 3px, 6px 100%; pointer-events: none;
+        }
+
+        #overlay {
+            position: absolute; top: 20px; left: 20px; z-index: 5;
+            color: #00f3ff; font-size: 14px; letter-spacing: 2px;
+            pointer-events: none; text-shadow: 0 0 8px #00f3ff;
+        }
+
+        .hud-corner {
+            position: absolute; width: 30px; height: 30px; z-index: 5;
+            border: 2px solid #00f3ff; pointer-events: none;
+            box-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
+        }
+
+        .top-left { top: 15px; left: 15px; border-right: none; border-bottom: none; }
+        .top-right { top: 15px; right: 15px; border-left: none; border-bottom: none; }
+        .bottom-left { bottom: 15px; left: 15px; border-right: none; border-top: none; }
+        .bottom-right { bottom: 15px; right: 15px; border-left: none; border-top: none; }
+
+        .status { color: #00f3ff; font-size: 13px; margin-top: 5px; font-weight: bold; }
+        #ai-text { color: #60ffff; font-size: 18px; margin-top: 10px; font-weight: bold; max-width: 600px; }
+
+        #mic-btn {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 10; padding: 12px 24px; font-family: 'Courier New', monospace;
+            font-size: 16px; font-weight: bold; color: #00f3ff; background: rgba(0, 20, 40, 0.8);
+            border: 2px solid #00f3ff; border-radius: 25px; cursor: pointer;
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); outline: none;
+        }
+        #mic-btn:active { background: #00f3ff; color: #000; }
+    </style>
+
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div class="hud-corner top-left"></div>
+    <div class="hud-corner top-right"></div>
+    <div class="hud-corner bottom-left"></div>
+    <div class="hud-corner bottom-right"></div>
+
+    <div id="overlay">
+        <div>SYSTEM: ONLINE</div>
+        <div id="status-text" class="status">STATUS: TOUCH CONTROLS READY</div>
+        <div id="ai-text">Tap "ACTIVATE JARVIS" to speak...</div>
+    </div>
+
+    <button id="mic-btn">🎙️ ACTIVATE JARVIS</button>
+
+    <script>
+        // ================= CONFIGURATION =================
+        const GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE";
+        const SYSTEM_PROMPT = "You are JARVIS, a highly intelligent and polite AI assistant. Keep answers short, formal, and concise under 2 sentences. Call the user Sir.";
+
+        // ================= 3D HUD GRAPHICS & INTERACTION =================
+        let scene, camera, renderer, hudGroup, coreRing, outerRing, particles;
+        
+        let targetScale = 1.0;
+        let currentScale = 1.0;
+        let targetRotX = 0, targetRotY = 0;
+        
+        // Touch State Management
+        let previousTouchPt = { x: 0, y: 0 };
+        let initialPinchDist = 0;
+        let initialPinchScale = 1.0;
+        let isTouching = false;
+
+        function init3D() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            hudGroup = new THREE.Group();
+            scene.add(hudGroup);
+
+            // Inner Ring
+            const ringGeo = new THREE.TorusGeometry(1.2, 0.03, 16, 100);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x00f3ff, wireframe: true });
+            coreRing = new THREE.Mesh(ringGeo, ringMat);
+            hudGroup.add(coreRing);
+
+            // Outer Ring
+            const outerGeo = new THREE.TorusGeometry(1.8, 0.01, 16, 100);
+            const outerMat = new THREE.MeshBasicMaterial({ color: 0x0088ff, wireframe: true });
+            outerRing = new THREE.Mesh(outerGeo, outerMat);
+            hudGroup.add(outerRing);
+
+            // Particle Cloud
+            const particleGeo = new THREE.BufferGeometry();
+            const count = 300;
+            const posArray = new Float32Array(count * 3);
+            for(let i = 0; i < count * 3; i++) {
+                posArray[i] = (Math.random() - 0.5) * 8;
+            }
+            particleGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            const particleMat = new THREE.PointsMaterial({ size: 0.03, color: 0x00f3ff, transparent: true, opacity: 0.8 });
+            particles = new THREE.Points(particleGeo, particleMat);
+            hudGroup.add(particles);
+
+            setupTouchEvents();
+            animate();
+        }
+
+        // --- TOUCH & PINCH GESTURE HANDLERS ---
+        function getPinchDistance(touches) {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function setupTouchEvents() {
+            window.addEventListener('touchstart', (e) => {
+                if (e.target.tagName === 'BUTTON') return; // Ignore button taps
+
+                if (e.touches.length === 1) {
+                    // One-finger rotation setup
+                    isTouching = true;
+                    previousTouchPt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                } else if (e.touches.length === 2) {
+                    // Two-finger pinch setup
+                    isTouching = true;
+                    initialPinchDist = getPinchDistance(e.touches);
+                    initialPinchScale = targetScale;
+                }
+            }, { passive: false });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isTouching || e.target.tagName === 'BUTTON') return;
+
+                if (e.touches.length === 1) {
+                    // One-finger Drag -> Rotate HUD
+                    const deltaX = e.touches[0].clientX - previousTouchPt.x;
+                    const deltaY = e.touches[0].clientY - previousTouchPt.y;
+
+                    targetRotY += deltaX * 0.008;
+                    targetRotX += deltaY * 0.008;
+
+                    previousTouchPt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+
+                } else if (e.touches.length === 2) {
+                    // Two-finger Pinch -> Zoom HUD
+                    const currentDist = getPinchDistance(e.touches);
+                    if (initialPinchDist > 0) {
+                        const factor = currentDist / initialPinchDist;
+                        targetScale = Math.max(0.4, Math.min(3.0, initialPinchScale * factor));
+                    }
+                }
+            }, { passive: false });
+
+            window.addEventListener('touchend', () => {
+                isTouching = false;
+                initialPinchDist = 0;
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Smoothly interpolate scale and rotation
+            currentScale += (targetScale - currentScale) * 0.1;
+            hudGroup.scale.set(currentScale, currentScale, currentScale);
+
+            hudGroup.rotation.y += (targetRotY - hudGroup.rotation.y) * 0.1;
+            hudGroup.rotation.x += (targetRotX - hudGroup.rotation.x) * 0.1;
+
+            // Idle continuous rotations
+            coreRing.rotation.z += 0.01;
+            outerRing.rotation.z -= 0.015;
+            particles.rotation.y += 0.002;
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init3D();
+
+        // ================= SPEECH & AI BRAIN (PURE WEB) =================
+        const statusText = document.getElementById('status-text');
+        const aiText = document.getElementById('ai-text');
+        const micBtn = document.getElementById('mic-btn');
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                statusText.innerText = "STATUS: LISTENING...";
+                targetScale = 1.3;
+            };
+
+            recognition.onresult = async (event) => {
+                const userSpeech = event.results[0][0].transcript;
+                aiText.innerText = `You: "${userSpeech}"`;
+                statusText.innerText = "STATUS: THINKING...";
+                targetScale = 1.0;
+
+                await askGemini(userSpeech);
+            };
+
+            recognition.onerror = () => {
+                statusText.innerText = "STATUS: ERROR LISTENING";
+                targetScale = 1.0;
+            };
+
+            recognition.onend = () => {
+                if (statusText.innerText.includes("LISTENING")) {
+                    statusText.innerText = "STATUS: STANDBY";
+                    targetScale = 1.0;
+                }
+            };
+        } else {
+            aiText.innerText = "Speech Recognition not supported on this browser. Use Chrome on mobile.";
+        }
+
+        micBtn.addEventListener('click', () => {
+            if (recognition) recognition.start();
+        });
+
+        async function askGemini(prompt) {
+            const apiKey = GEMINI_API_KEY; 
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: `${SYSTEM_PROMPT}\nUser: ${prompt}` }] }]
+                    })
+                });
+
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                const data = await response.json();
+                const reply = data.candidates[0].content.parts[0].text;
+                aiText.innerText = reply;
+                speak(reply);
+            } catch (err) {
+                console.error("API Error:", err);
+                aiText.innerText = "Neural connection failed, Sir.";
+                statusText.innerText = "STATUS: ERROR";
+                speak("Neural connection failed, Sir.");
+            }
+        }
+
+        function speak(text) {
+            if (!('speechSynthesis' in window)) return;
+
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            const voices = window.speechSynthesis.getVoices();
+            const preferredVoice = voices.find(v => v.lang.includes('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('UK'))) || voices[0];
+            if (preferredVoice) utterance.voice = preferredVoice;
+
+            utterance.pitch = 0.9;
+            utterance.rate = 1.0;
+
+            utterance.onstart = () => {
+                statusText.innerText = "STATUS: SPEAKING...";
+                let speechPulse = setInterval(() => {
+                    if (!window.speechSynthesis.speaking) {
+                        clearInterval(speechPulse);
+                        targetScale = 1.0;
+                        statusText.innerText = "STATUS: STANDBY";
+                    } else {
+                        targetScale = 1.1 + Math.random() * 0.4;
+                    }
+                }, 80);
+            };
+
+            utterance.onend = () => {
+                targetScale = 1.0;
+                statusText.innerText = "STATUS: STANDBY";
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+    </script>
+</body>
+</html>
